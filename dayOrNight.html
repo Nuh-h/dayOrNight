@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Simple Map</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
+    <!-- jsFiddle will insert css and js -->
+    <style>
+        /* Optional: Makes the sample page fill the window. */
+        html,
+        body,
+        main,
+        section {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Always set the map height explicitly to define the size of the div
+       * element that contains the map. */
+        #map {
+            height: 80%;
+        }
+
+        .header {
+            height: 7%;
+        }
+
+        .info {
+            height: 13%;
+        }
+
+        .header,
+        .info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            width: 100%;
+            background-color: rgb(0, 3, 3);
+            z-index: 0;
+            color: green;
+            text-align: center;
+            font-size: 34px;
+            font-weight: 800;
+
+            transition: background 1s ease-in-out;
+        }
+
+        .info__place {
+            padding: 0 1%;
+        }
+
+        .dayTheme {
+            background: white;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <header class="header">Day or Night?</header>
+
+        <div title="interactive map" id="map">If you can see this message, then either your internet is taking sometime
+            or Google Maps is having a hiccup. Please try refreshing the page.</div>
+        <div title="day/night result of chosen location on map" class="info">
+            <div class="info__dayOrNight"> _____ </div>
+            <div class="info__place"> _____ </div>
+        </div>
+
+    </main>
+    <!-- Async script executes immediately and must be after any DOM elements used in callback. -->
+    <script
+        src="https://maps.googleapis.com/maps/api/js?key=API_KEY&callback=initMap&v=weekly&channel=2"
+        async></script>
+
+    <script>
+        //api keys
+        const geoIP_ApiKey = 'API_KEY'; //https://ipgeolocation.io/documentation/timezone-api.html
+        const googleMaps_ApiKey = 'API_KEY'; //Google Maps api
+
+        let map;
+        let myLatLng = { lat: 0.0236, lng: 37.9062 }
+
+        let marker;
+        let info__dayOrNight = document.querySelector('.info__dayOrNight');
+        let info__place = document.querySelector('.info__place');
+
+        let sunrise;
+        let sunset;
+
+        function initMap() {
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: myLatLng,
+                zoom: 4,
+                suppressAlert: true,
+            });
+
+            map.addListener("click", (mapMouseEvent) => {
+                getSunriseSunsetTimesAndPinLocation(mapMouseEvent, 'click')
+            })
+
+            map.addListener('dragend', (mapMouseEvent) => getSunriseSunsetTimesAndPinLocation(mapMouseEvent, 'dragend'))
+
+        }
+
+        function getSunriseSunsetTimesAndPinLocation(mapMouseEvent, mapEventType) {
+
+            var latLng;
+
+            if (mapEventType == "click") {
+
+                map.panTo(mapMouseEvent.latLng);
+
+                latLng = mapMouseEvent.latLng;
+            }
+            else {
+                latLng = map.getCenter();
+
+            }
+
+            pinLocation(latLng);
+            getSunriseSunsetforToday(latLng);
+            getAndSetLocationNameFromCoordinates(latLng.lng(), latLng.lat());
+
+        }
+
+        function getSunriseSunsetforToday(latLng) {
+            let today = new Date();
+            let todayDateInISO = today.toISOString().split('T')[0];
+
+            fetch(`https://api.sunrise-sunset.org/json?lat=${latLng.lat()}&lng=${latLng.lng()}&date=${todayDateInISO}`)
+                .then(res => res.json())
+                .then(data => {
+
+                    if (data.status == "OK") {
+                        const results = data.results;
+
+                        sunrise = covertTo24Hour(results.sunrise)
+                        sunset = covertTo24Hour(results.sunset)
+
+                        getDayOrNightFromCoordinates(latLng);
+                    }
+                    else {
+                        console.log("Error with sunrise-sunset api")
+                    }
+                })
+
+        }
+
+        function getDayOrNightFromCoordinates(latLng) {
+            fetch(`https://api.ipgeolocation.io/timezone?apiKey=${geoIP_ApiKey}&lat=${latLng.lat()}&long=${latLng.lng()}`)
+                .then(res => res.json())
+                .then(data => {
+
+                    sunrise = offSetTimeBy(sunrise, data.timezone_offset);
+                    sunset = offSetTimeBy(sunset, data.timezone_offset);
+
+                    let isDay = isDayTime(sunrise, sunset, data.time_24);
+
+                    if (isDay) {
+                        document.querySelector('.info').classList.add('dayTheme')
+                        document.querySelector('.header').classList.add('dayTheme')
+                    }
+                    else {
+                        document.querySelector('.info').classList.remove('dayTheme')
+                        document.querySelector('.header').classList.remove('dayTheme')
+                    }
+
+                    info__dayOrNight.innerHTML = isDay ? 'It is currently day time' : 'It is currently night time';
+                })
+        }
+
+        function getAndSetLocationNameFromCoordinates(lng, lat) {
+            fetch(`https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode?f=pjson&featureTypes=&langCode=EN&location=${lng},${lat}`)
+                .then(res => res.json())
+                .then(data => {
+                    var shortLabel = data.address.ShortLabel;
+                    var longLabel = data.address.LongLabel;
+                    var placeName = data.addressinfo__placeName;
+                    info__place.innerHTML = (placeName ? " in " + placeName : " in " + shortLabel)
+                });
+        }
+
+
+        function isDayTime(sunrise, sunset, currentTime) {
+            let sunriseValue = parseInt(sunrise.replace(':', ''))
+            let sunsetValue = parseInt(sunset.replace(':', ''))
+            let currentTimeValue = parseInt(currentTime.replace(":", ''))
+
+            return currentTimeValue >= sunriseValue && currentTimeValue < sunsetValue;
+        }
+
+        function offSetTimeBy(time, offsetHours) {
+
+            if (time.length % 2 != 0) time = time.padStart(8, '0')
+
+            return parseInt(time.slice(0, 2)) + offsetHours + time.slice(2)
+        }
+
+        function covertTo24Hour(timeIn12hr) {
+            const [time, timeofday] = timeIn12hr.split(' ')
+            if (timeofday == 'AM') return time;
+
+            const [hour, minute, second] = time.split(':')
+            return parseInt(hour) + 12 + ":" + minute + ":" + second
+        }
+
+        function pinLocation(latLng) {
+            const lat = latLng.lat();
+            const lng = latLng.lng();
+            map.setCenter(latLng);
+
+            if (marker != null) marker.setMap(null);
+
+            marker = new google.maps.Marker({
+                map: map,
+                position: latLng
+            });
+
+        }
+
+    </script>
+</body>
+
+
+</html>
